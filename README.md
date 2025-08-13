@@ -237,7 +237,7 @@ with pm.Model(coords=coords) as hierarchical_model:
 
 """Now that the model is sampled, we can analyze the results, visualize the posterior distributions, and check for convergence."""
 
-# === 5. 結果の要約と可視化 (事後分布) ===
+# === 5. 結果の要約 (事後分布) ===
 print("\n=== 結果の要約 ===")
 print(az.summary(idata, fmt="wide"))
 
@@ -267,5 +267,5 @@ posterior_means = az.summary(idata, var_names=["age_beta", "bmi_beta", "mmse_bet
 print("事後平均:\n", posterior_means)
 print("\n論文で報告されている相関 (τ) または効果量 (d):\n", priors) # Prior means are based on reported effects
 
-# 可視化結果の保存 (事後分布)
+# 結果の保存 (事後分布)
 print("\n事後分布のグラフをtrace_plots.pdf, forest_plot.pdfとして保存しました。")
