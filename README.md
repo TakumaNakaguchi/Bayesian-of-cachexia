@@ -1,5 +1,4 @@
-# Bayesian-of-cachexia
-# 本コードは論文「要介護がん悪液質患者に対する訪問リハテーションの効果：Barthel Index利得の階層ベイズモデル推定」の解析手順を模擬データで再現したものです。
+# 本コードは論文「○○○（2025）」の解析手順を模擬データで再現したものです。
 # 個人情報保護および倫理的配慮のため、実データは含まれていません。
 # モデル構造・事前分布・解析手順は論文本文と同一です。
 #
@@ -8,10 +7,6 @@
 #   Colabではライブラリインストールと日本語フォント設定が自動的に適用されます。
 #   ローカル環境で実行する場合は、必要なライブラリのインストールと
 #   日本語フォント設定を適宜調整してください。
-
-#注意：Google Colab用の解析コードです。その他の総合開発環境では作動しない可能性があります。
-#注意: 実際のデータを使用する場合は、以下を df = pd.read_csv("使用者のデータ.csv") に置き換える必要があります。
-
 
 !pip install pandas numpy scipy matplotlib seaborn pymc arviz japanize-matplotlib
 
@@ -22,17 +17,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pymc as pm
 import arviz as az
-import japanize_matplotlib # Import for Japanese font support
+import japanize_matplotlib  # Import for Japanese font support
 
-# Configure matplotlib to use a font that supports Japanese characters
-plt.rcParams['font.family'] = 'IPAexGothic'
-
+# 日本語フォントの設定（フォールバック処理を追加）
+try:
+    plt.rcParams['font.family'] = 'IPAexGothic'
+except:
+    plt.rcParams['font.family'] = 'sans-serif'
+    print("警告: IPAexGothicフォントが利用できません。デフォルトフォントを使用します。")
 
 # 再現性のための乱数シード設定
 np.random.seed(42)
 
-# === 1. データ読み込み===
-#注意: 実際のデータを使用する場合は、以下を df = pd.read_csv("使用者のデータ.csv") に置き換える必要があります。
+# === 1. データ読み込み ===
+# 注意: 実際のデータを使用する場合は、以下を df = pd.read_csv("使用者のデータ.csv") に置き換える必要があります。
 
 n = 49
 data = {
@@ -44,12 +42,11 @@ data = {
     'CRP': np.random.normal(1.0, 0.5, n),
     'FTSST': np.random.normal(15.5, 7.4, n),
     'Residence': [0]*36 + [1]*13,  # 0: 自宅, 1: 施設
-    'RehabFreq': [1]*19 + [2]*26 + [3]*4  # 1: 週1回, 2: 週2回, 3: 週3回以上
+    'RehabFreq': [1]*19 + [2]*26 + [3]*4  # 1: 週1回, 2: 週2回以上, 3: 週3回
 }
 df = pd.DataFrame(data)
 
 # 前処理: カテゴリ変数を数値化
-
 df['Sex'] = df['Sex'].map({'M': 0, 'F': 1})
 df['RehabFreq_binary'] = np.where(df['RehabFreq'] == 1, 0, 1)  # 0: 週1回, 1: 週2回以上
 
@@ -65,11 +62,10 @@ df['BI_gain'] = (10.9
                  + np.random.normal(0, 2, n))
 
 # 欠損値チェック
-
 print("欠損値チェック:\n", df.isna().sum())
 
 # === 2. 基礎統計 ===
-
+# 論文セクション「データ解析：基礎統計の算出」に基づく
 cont_vars = ['Age', 'BMI', 'MMSE', 'GripStrength', 'CRP', 'FTSST']
 cat_vars = ['Sex', 'Residence', 'RehabFreq_binary']
 
@@ -85,7 +81,10 @@ for var in cont_vars:
     stats.probplot(df[var].dropna(), dist="norm", plot=ax2)
     ax2.set_title(f"{var} Q-Qプロット")
     plt.tight_layout()
-    plt.savefig(f"{var}_plots.pdf")  # 論文用に保存
+    try:
+        plt.savefig(f"{var}_plots.pdf")  # 論文用に保存
+    except Exception as e:
+        print(f"ファイル保存エラー ({var}_plots.pdf): {e}")
     plt.close()
 
     if p > 0.05:
@@ -100,50 +99,42 @@ for var in cat_vars:
     for val, count in counts.items():
         print(f"  {val}: {count} ({percents[val]:.1f}%)")
 
-
 # === 3. 事前分布設定のための探索的データ解析 ===
+# 論文セクション「事前分布の設定」に基づく
 print("\n=== 探索的データ解析 ===")
 priors = {
-    'Age': {'mean': -0.25, 'sd': (0.40-0.10)/(2*1.96)},  # 論文より
+    'Age': {'mean': -0.25, 'sd': (0.40-0.10)/(2*1.96)},
     'BMI': {'mean': -0.21, 'sd': (0.35-0.08)/(2*1.96)},
     'MMSE': {'mean': 0.18, 'sd': (0.31-0.05)/(2*1.96)},
     'FTSST': {'mean': -0.22, 'sd': (0.36-0.09)/(2*1.96)},
     'GripStrength': {'mean': 0.15, 'sd': (0.28-0.02)/(2*1.96)},
     'CRP': {'mean': -0.19, 'sd': (0.33-0.06)/(2*1.96)},
-    'Sex': {'mean': 0, 'sd': 0.5},  # CIが0を含む
-    'Residence': {'mean': 0, 'sd': 0.5},  # CIが0を含む
+    'Sex': {'mean': 0, 'sd': 0.5},
+    'Residence': {'mean': 0, 'sd': 0.5},
     'RehabFreq_binary': {'mean': 0.62, 'sd': (0.96-0.25)/(2*1.96)}  # d=0.62
 }
 
-# KendallのτとブートストラップCI (Manual Bootstrap)
+# KendallのτとブートストラップCI
 n_resamples = 1000
 alpha = 0.05
 
 for var in cont_vars:
     tau, p = stats.kendalltau(df[var], df['BI_gain'])
-
-    # Manual bootstrap
     bootstrap_taus = []
-    data_arrays = np.array([df[var].values, df['BI_gain'].values]).T # Transpose to have rows as samples
+    data_arrays = np.array([df[var].values, df['BI_gain'].values]).T
     n_samples = len(data_arrays)
-
     for _ in range(n_resamples):
-        # Resample with replacement
         resample_indices = np.random.choice(n_samples, n_samples, replace=True)
         resampled_data = data_arrays[resample_indices]
-        # Calculate tau on resampled data
         boot_tau, _ = stats.kendalltau(resampled_data[:, 0], resampled_data[:, 1])
-        bootstrap_taus.append(boot_tau)
-
-    # Calculate percentile confidence interval
+        if not np.isnan(boot_tau):  # NaNを除外
+            bootstrap_taus.append(boot_tau)
     ci_low = np.percentile(bootstrap_taus, alpha/2 * 100)
     ci_high = np.percentile(bootstrap_taus, (1 - alpha/2) * 100)
-
     print(f"{var} Kendall τ={tau:.3f}, p={p:.4f}, 95%CI: [{ci_low:.3f}, {ci_high:.3f}]")
 
-
-# カテゴリ変数のCohen's d (using scipy.stats.bootstrap as it worked)
-from scipy.stats import bootstrap # Import bootstrap here
+# カテゴリ変数のCohen's d
+from scipy.stats import bootstrap
 
 def cohens_d(g1, g2):
     m1, m2 = np.mean(g1), np.mean(g2)
@@ -157,63 +148,49 @@ for var in cat_vars:
     if len(group_vals) == 2:
         g1, g2 = groups.get_group(group_vals[0]), groups.get_group(group_vals[1])
         d = cohens_d(g1, g2)
-        def d_func(idx):
-            sample = df['BI_gain'].iloc[idx]
-            sample_g1 = sample[df[var] == group_vals[0]]
-            sample_g2 = sample[df[var] == group_vals[1]]
-            # Handle potential empty groups in resamples
+        def d_func(data, axis):
+            sample_g1 = data[df[var] == group_vals[0]]
+            sample_g2 = data[df[var] == group_vals[1]]
             if len(sample_g1) < 2 or len(sample_g2) < 2:
-                 return np.nan  # Or handle as appropriate, e.g., return 0 or skip
+                return np.nan
             return cohens_d(sample_g1, sample_g2)
-
-        # Filter out NaN results from the bootstrap if any occurred due to empty resampled groups
-        res = bootstrap((np.arange(len(df)),), d_func, vectorized=False, n_resamples=1000)
+        res = bootstrap((df['BI_gain'].values,), d_func, vectorized=False, n_resamples=1000)
         ci_low, ci_high = res.confidence_interval
         print(f"{var} Cohen's d={d:.2f}, 95%CI: [{ci_low:.2f}, {ci_high:.2f}]")
 
-
 # 事前分布の出力
 print("\n=== 事前分布 ===")
-print(f"BI_gain: N(5.8, {5.33**2:.2f})")
+print(f"BI_gain (SEM): N(5.8, {5.33**2:.2f})")
+print(f"BI_gain (MDC): N(5.8, {16.3**2:.2f})")
 for var, p in priors.items():
     print(f"{var}: N({p['mean']:.3f}, {p['sd']**2:.3f})")
 
+# === 4. Bayesian階層モデリング (主要解析) ===
+print("\n=== Bayesian階層モデリング (主要解析) ===")
 
+# カテゴリ変数をPandasのCategorical型に変換
+df['Residence_cat'] = pd.Categorical(df['Residence'])
+df['RehabFreq_cat'] = pd.Categorical(df['RehabFreq_binary'])
 
-# === 4. Bayesian階層モデリング ===
-print("\n=== Bayesian階層モデリング ===")
-
-# PyMCモデルの定義
+# PyMCモデルの定義 (階層構造)
 coords = {
-    "coeffs": ['Age', 'BMI', 'MMSE', 'GripStrength', 'CRP', 'FTSST', 'Sex', 'Residence', 'RehabFreq_binary']
+    "coeffs": ['Age', 'BMI', 'MMSE', 'GripStrength', 'CRP', 'FTSST', 'Sex'],
+    "residence_group": df['Residence_cat'].unique(),
+    "rehabfreq_group": df['RehabFreq_cat'].unique()
 }
-with pm.Model(coords=coords) as hierarchical_model:
-    # 事前分布 (探索的データ解析の結果に基づく)
-    # 連続変数の回帰係数 (tau)
-    age_beta = pm.Normal("age_beta", mu=priors['Age']['mean'], sigma=priors['Age']['sd'])
-    bmi_beta = pm.Normal("bmi_beta", mu=priors['BMI']['mean'], sigma=priors['BMI']['sd'])
-    mmse_beta = pm.Normal("mmse_beta", mu=priors['MMSE']['mean'], sigma=priors['MMSE']['sd'])
-    grip_beta = pm.Normal("grip_beta", mu=priors['GripStrength']['mean'], sigma=priors['GripStrength']['sd'])
-    crp_beta = pm.Normal("crp_beta", mu=priors['CRP']['mean'], sigma=priors['CRP']['sd'])
-    ftsst_beta = pm.Normal("ftsst_beta", mu=priors['FTSST']['mean'], sigma=priors['FTSST']['sd'])
-
-    # カテゴリ変数の差の平均 (Cohen's d に近い尺度)
-    # RehabFreq_binary のみ事前分布を設定 (d=0.62)
-    rehab_beta = pm.Normal("rehab_beta", mu=priors['RehabFreq_binary']['mean'], sigma=priors['RehabFreq_binary']['sd'])
-
-    # SexとResidenceはCIに0を含むため、より広い事前分布
-    sex_beta = pm.Normal("sex_beta", mu=priors['Sex']['mean'], sigma=priors['Sex']['sd'])
-    residence_beta = pm.Normal("residence_beta", mu=priors['Residence']['mean'], sigma=priors['Residence']['sd'])
-
-
-    # 切片
-    intercept = pm.Normal("intercept", mu=df['BI_gain'].mean(), sigma=df['BI_gain'].std())
-
-    # 標準偏差
+with pm.Model(coords=coords) as hierarchical_model_main:
+    intercept_residence = pm.Normal("intercept_residence", mu=df['BI_gain'].mean(), sigma=df['BI_gain'].std(), dims="residence_group")
+    intercept_rehab = pm.Normal("intercept_rehab", mu=df['BI_gain'].mean(), sigma=df['BI_gain'].std(), dims="rehabfreq_group")
+    age_beta = pm.Normal("age_beta", mu=priors['Age']['mean'], sigma=priors['Age']['sd'], dims="residence_group")
+    bmi_beta = pm.Normal("bmi_beta", mu=priors['BMI']['mean'], sigma=priors['BMI']['sd'], dims="residence_group")
+    mmse_beta = pm.Normal("mmse_beta", mu=priors['MMSE']['mean'], sigma=priors['MMSE']['sd'], dims="residence_group")
+    grip_beta = pm.Normal("grip_beta", mu=priors['GripStrength']['mean'], sigma=priors['GripStrength']['sd'], dims="residence_group")
+    crp_beta = pm.Normal("crp_beta", mu=priors['CRP']['mean'], sigma=priors['CRP']['sd'], dims="residence_group")
+    ftsst_beta = pm.Normal("ftsst_beta", mu=priors['FTSST']['mean'], sigma=priors['FTSST']['sd'], dims="residence_group")
+    sex_beta = pm.Normal("sex_beta", mu=priors['Sex']['mean'], sigma=priors['Sex']['sd'], dims="residence_group")
     sigma = pm.HalfNormal("sigma", sigma=df['BI_gain'].std())
 
     # 線形モデル
-    # 各説明変数を標準化 (回帰係数の解釈を容易にするため)
     age_scaled = (df['Age'] - df['Age'].mean()) / df['Age'].std()
     bmi_scaled = (df['BMI'] - df['BMI'].mean()) / df['BMI'].std()
     mmse_scaled = (df['MMSE'] - df['MMSE'].mean()) / df['MMSE'].std()
@@ -221,51 +198,158 @@ with pm.Model(coords=coords) as hierarchical_model:
     crp_scaled = (df['CRP'] - df['CRP'].mean()) / df['CRP'].std()
     ftsst_scaled = (df['FTSST'] - df['FTSST'].mean()) / df['FTSST'].std()
 
-
-    mu = intercept + age_beta * age_scaled + bmi_beta * bmi_scaled + mmse_beta * mmse_scaled + \
-         grip_beta * grip_scaled + crp_beta * crp_scaled + ftsst_beta * ftsst_scaled + \
-         sex_beta * df['Sex'] + residence_beta * df['Residence'] + rehab_beta * df['RehabFreq_binary']
-
+    # 階層構造
+    mu = (intercept_residence[df['Residence_cat'].cat.codes] +
+          intercept_rehab[df['RehabFreq_cat'].cat.codes] +
+          age_beta[df['Residence_cat'].cat.codes] * age_scaled +
+          bmi_beta[df['Residence_cat'].cat.codes] * bmi_scaled +
+          mmse_beta[df['Residence_cat'].cat.codes] * mmse_scaled +
+          grip_beta[df['Residence_cat'].cat.codes] * grip_scaled +
+          crp_beta[df['Residence_cat'].cat.codes] * crp_scaled +
+          ftsst_beta[df['Residence_cat'].cat.codes] * ftsst_scaled +
+          sex_beta[df['Residence_cat'].cat.codes] * df['Sex'])
 
     # 尤度
     likelihood = pm.Normal("likelihood", mu=mu, sigma=sigma, observed=df['BI_gain'])
 
-    # モデルのサンプリング
+    # モデルのサンプリング（複数コアを使用）
     print("モデルのサンプリングを開始...")
-    idata = pm.sample(2000, tune=1000, cores=1, target_accept=0.95, return_inferencedata=True)
+    idata_main = pm.sample(2000, tune=500, cores=4, target_accept=0.95, return_inferencedata=True)
     print("サンプリング完了。")
 
-"""Now that the model is sampled, we can analyze the results, visualize the posterior distributions, and check for convergence."""
+# === 5. 感度解析 ===
+print("\n=== Bayesian階層モデリング (感度解析) ===")
+bi_gain_mdc_sigma = 16.3
+with pm.Model(coords=coords) as hierarchical_model_mdc:
+    intercept_residence = pm.Normal("intercept_residence", mu=df['BI_gain'].mean(), sigma=bi_gain_mdc_sigma, dims="residence_group")
+    intercept_rehab = pm.Normal("intercept_rehab", mu=df['BI_gain'].mean(), sigma=bi_gain_mdc_sigma, dims="rehabfreq_group")
+    age_beta = pm.Normal("age_beta", mu=priors['Age']['mean'], sigma=priors['Age']['sd'], dims="residence_group")
+    bmi_beta = pm.Normal("bmi_beta", mu=priors['BMI']['mean'], sigma=priors['BMI']['sd'], dims="residence_group")
+    mmse_beta = pm.Normal("mmse_beta", mu=priors['MMSE']['mean'], sigma=priors['MMSE']['sd'], dims="residence_group")
+    grip_beta = pm.Normal("grip_beta", mu=priors['GripStrength']['mean'], sigma=priors['GripStrength']['sd'], dims="residence_group")
+    crp_beta = pm.Normal("crp_beta", mu=priors['CRP']['mean'], sigma=priors['CRP']['sd'], dims="residence_group")
+    ftsst_beta = pm.Normal("ftsst_beta", mu=priors['FTSST']['mean'], sigma=priors['FTSST']['sd'], dims="residence_group")
+    sex_beta = pm.Normal("sex_beta", mu=priors['Sex']['mean'], sigma=priors['Sex']['sd'], dims="residence_group")
+    sigma = pm.HalfNormal("sigma", sigma=df['BI_gain'].std())
 
-# === 5. 結果の要約 (事後分布) ===
-print("\n=== 結果の要約 ===")
-print(az.summary(idata, fmt="wide"))
+    mu = (intercept_residence[df['Residence_cat'].cat.codes] +
+          intercept_rehab[df['RehabFreq_cat'].cat.codes] +
+          age_beta[df['Residence_cat'].cat.codes] * age_scaled +
+          bmi_beta[df['Residence_cat'].cat.codes] * bmi_scaled +
+          mmse_beta[df['Residence_cat'].cat.codes] * mmse_scaled +
+          grip_beta[df['Residence_cat'].cat.codes] * grip_scaled +
+          crp_beta[df['Residence_cat'].cat.codes] * crp_scaled +
+          ftsst_beta[df['Residence_cat'].cat.codes] * ftsst_scaled +
+          sex_beta[df['Residence_cat'].cat.codes] * df['Sex'])
 
-print("\n=== 事後分布の可視化 ===")
-az.plot_trace(idata)
+    likelihood = pm.Normal("likelihood", mu=mu, sigma=sigma, observed=df['BI_gain'])
+
+    print("感度解析のサンプリングを開始...")
+    idata_mdc = pm.sample(2000, tune=500, cores=4, target_accept=0.95, return_inferencedata=True)
+    print("サンプリング完了。")
+
+# === 6. 結果の要約と可視化 (事後分布) ===
+print("\n=== 主要解析の結果の要約 ===")
+summary_main = az.summary(idata_main, fmt="wide")
+print(summary_main)
+
+print("\n=== 感度解析の結果の要約 ===")
+print(az.summary(idata_mdc, fmt="wide"))
+
+print("\n=== 主要解析の事後分布の可視化 ===")
+az.plot_trace(idata_main, var_names=['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta', 'intercept_residence', 'intercept_rehab', 'sigma'])
 plt.tight_layout()
-plt.savefig("trace_plots.pdf")
+try:
+    plt.savefig("trace_plots_main.pdf")
+except Exception as e:
+    print(f"ファイル保存エラー (trace_plots_main.pdf): {e}")
 plt.show()
 
-az.plot_forest(idata, var_names=["age_beta", "bmi_beta", "mmse_beta", "grip_beta", "crp_beta", "ftsst_beta", "sex_beta", "residence_beta", "rehab_beta", "intercept"], combined=True)
+az.plot_forest(idata_main, var_names=['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta', 'intercept_residence', 'intercept_rehab'], combined=True)
+plt.title("主要解析の事後分布")
 plt.tight_layout()
-plt.savefig("forest_plot.pdf")
+try:
+    plt.savefig("forest_plot_main.pdf")
+except Exception as e:
+    print(f"ファイル保存エラー (forest_plot_main.pdf): {e}")
+plt.show()
+
+# 主要解析と感度解析の比較可視化
+print("\n=== 主要解析と感度解析の比較 ===")
+az.plot_forest([idata_main, idata_mdc], var_names=['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta'], combined=True)
+plt.title("主要解析と感度解析の比較")
+plt.tight_layout()
+try:
+    plt.savefig("forest_plot_comparison.pdf")
+except Exception as e:
+    print(f"ファイル保存エラー (forest_plot_comparison.pdf): {e}")
 plt.show()
 
 # 収束診断
-rhat = az.rhat(idata)
-print("\n=== Rhat (収束診断) ===")
-print(rhat)
+rhat_main = az.rhat(idata_main)
+print("\n=== Rhat (主要解析) ===")
+# Rhat>1.1の変数のみ警告表示
+rhat_issues = {var: val for var, val in rhat_main.to_dataframe().items() if any(v > 1.1 for v in val.values.flatten())}
+if rhat_issues:
+    print("警告: 以下の変数のRhatが1.1を超えています（収束に問題の可能性）:")
+    print(rhat_issues)
+else:
+    print("全ての変数のRhatは1.1未満（収束良好）。")
 
-ess = az.ess(idata)
-print("\n=== ESS (実効サンプルサイズ) ===")
-print(ess)
+ess_main = az.ess(idata_main)
+print("\n=== ESS (主要解析) ===")
+# ESSの要約（最小値と平均値）
+print(f"ESS最小値: {ess_main.to_dataframe().min().min():.0f}")
+print(f"ESS平均値: {ess_main.to_dataframe().mean().mean():.0f}")
 
-print("\n=== 事後平均と論文の値の比較 ===")
-# Use the original idata for summary of parameter posteriors
-posterior_means = az.summary(idata, var_names=["age_beta", "bmi_beta", "mmse_beta", "grip_beta", "crp_beta", "ftsst_beta", "sex_beta", "residence_beta", "rehab_beta", "intercept"])["mean"]
-print("事後平均:\n", posterior_means)
-print("\n論文で報告されている相関 (τ) または効果量 (d):\n", priors) # Prior means are based on reported effects
+# 効果判定基準
+print("\n=== 効果判定 (論文セクション「効果判定基準」に基づく) ===")
+effect_results = []
+for var in ['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta']:
+    posterior = idata_main.posterior[var].values.flatten()
+    prob_positive = np.mean(posterior > 0)
+    prob_negative = np.mean(posterior < 0)
+    hdi = az.hdi(idata_main, var_names=[var])[var].values
+    effect = ("改善効果あり" if hdi[0] > 0 else
+              "悪化効果あり" if hdi[1] < 0 else
+              "改善効果あり (90%基準)" if prob_positive >= 0.9 else
+              "悪化効果あり (90%基準)" if prob_negative >= 0.9 else
+              "効果不明")
+    effect_results.append({
+        'Variable': var,
+        'P(β>0)': prob_positive,
+        'P(β<0)': prob_negative,
+        '95% CrI': f"[{hdi[0]:.2f}, {hdi[1]:.2f}]",
+        'Effect': effect
+    })
+effect_summary = pd.DataFrame(effect_results)
+try:
+    effect_summary.to_csv("effect_summary.csv")
+except Exception as e:
+    print(f"ファイル保存エラー (effect_summary.csv): {e}")
+print(effect_summary)
 
-# 結果の保存 (事後分布)
-print("\n事後分布のグラフをtrace_plots.pdf, forest_plot.pdfとして保存しました。")
+# 効果判定の可視化
+print("\n=== 効果判定の可視化 ===")
+plt.figure(figsize=(10, 6))
+sns.barplot(data=effect_summary, x='P(β>0)', y='Variable', hue='Effect')
+plt.title("効果判定：P(β>0)の分布")
+plt.tight_layout()
+try:
+    plt.savefig("effect_summary_plot.pdf")
+except Exception as e:
+    print(f"ファイル保存エラー (effect_summary_plot.pdf): {e}")
+plt.show()
+
+# 主要解析と感度解析の比較
+print("\n=== 主要解析と感度解析の事後平均の比較 (論文セクション「感度解析」に基づく) ===")
+posterior_means_main = az.summary(idata_main, var_names=['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta'])["mean"]
+posterior_means_mdc = az.summary(idata_mdc, var_names=['age_beta', 'bmi_beta', 'mmse_beta', 'grip_beta', 'crp_beta', 'ftsst_beta', 'sex_beta'])["mean"]
+diff_means = posterior_means_main - posterior_means_mdc
+print("主要解析の事後平均:\n", posterior_means_main)
+print("\n感度解析の事後平均:\n", posterior_means_mdc)
+print("\n事後平均の差 (主要解析 - 感度解析):\n", diff_means)
+print("主要解析と感度解析の結果の方向性と大きさを比較し、頑健性を評価する。")
+
+# 可視化結果の保存
+print("\n事後分布のグラフをtrace_plots_main.pdf, forest_plot_main.pdf, forest_plot_comparison.pdf, effect_summary_plot.pdfとして保存しました。")
